@@ -2,6 +2,7 @@
 set -e
 
 PROJECT_NAME=$1
+COMMIT_MSG=${2:-"chore: init project"}
 
 if [ -z "$PROJECT_NAME" ]; then
   echo "Bitte Projektname angeben!"
@@ -35,8 +36,8 @@ export default defineConfig({
 })
 EOF
 
-echo "Installiere Prettier + Tailwind Prettier Plugin..."
-pnpm add -D prettier prettier-plugin-tailwindcss
+echo "Installiere ESLint + Prettier + Tailwind Prettier Plugin..."
+pnpm add -D prettier prettier-plugin-tailwindcss eslint @eslint/js globals eslint-config-prettier eslint-plugin-react eslint-plugin-react-hooks @typescript-eslint/parser @typescript-eslint/eslint-plugin eslint-plugin-react-refresh
 
 echo "Erstelle .prettierrc.cjs..."
 cat > .prettierrc.cjs <<EOF
@@ -56,11 +57,72 @@ cat > .prettierignore <<EOF
 node_modules
 dist
 build
+.next
+out
+coverage
+.eslintcache
+pnpm-lock.yaml
 EOF
 
 echo "Schreibe src/index.css..."
 cat > src/index.css <<EOF
 @import "tailwindcss";
+EOF
+
+echo "Entferne alte ESLint-Konfiguration..."
+rm -f .eslintrc.* eslint.config.* 2>/dev/null || true
+
+echo "Erstelle eslint.config.js (flat config)..."
+cat > eslint.config.js <<EOF
+import js from '@eslint/js'
+import globals from 'globals'
+import react from 'eslint-plugin-react'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import tseslint from '@typescript-eslint/eslint-plugin'
+import tsparser from '@typescript-eslint/parser'
+import prettier from 'eslint-config-prettier'
+
+export default [
+  { ignores: ['dist'] },
+  {
+    files: ['**/*.{js,jsx,ts,tsx}'],
+    languageOptions: {
+      ecmaVersion: 2021,
+      sourceType: 'module',
+      parser: tsparser,
+      parserOptions: {
+        ecmaFeatures: { jsx: true },
+      },
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        ...globals.es2021,
+      },
+    },
+    plugins: {
+      react,
+      'react-hooks': reactHooks,
+      'react-refresh': reactRefresh,
+      '@typescript-eslint': tseslint,
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+      ...react.configs.recommended.rules,
+      ...reactHooks.configs.recommended.rules,
+      ...tseslint.configs.recommended.rules,
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      'react/react-in-jsx-scope': 'off',
+    },
+    settings: {
+      react: {
+        version: 'detect',
+      },
+    },
+  },
+  prettier,
+]
 EOF
 
 echo "Erstelle Startseite (src/App.jsx)..."
@@ -102,7 +164,50 @@ function App() {
 export default App;
 EOF
 
+echo "Ergänze package.json Scripts (lint/format)..."
+node <<'NODE'
+const fs = require("fs");
+
+if (!fs.existsSync("package.json")) {
+  console.error("Keine package.json gefunden – bist du im Projektordner?");
+  process.exit(1);
+}
+
+const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+
+pkg.scripts = pkg.scripts || {};
+
+if (!pkg.scripts.lint) {
+  pkg.scripts.lint = "eslint . --ext .js,.jsx,.ts,.tsx";
+}
+if (!pkg.scripts.format) {
+  pkg.scripts.format = "prettier . --check";
+}
+if (!pkg.scripts["format:fix"]) {
+  pkg.scripts["format:fix"] = "prettier . --write";
+}
+
+fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+NODE
+
+echo ""
+echo "Prüfe Git-Repo..."
+
+if [ ! -d .git ]; then
+  echo "Kein .git Ordner gefunden – initialisiere Git..."
+  git init
+  git branch -M main
+  git add .
+  git commit -m "$COMMIT_MSG"
+  echo "Git init + erster Commit erledigt."
+else
+  echo "Git-Repo existiert bereits – überspringe git init."
+fi
+
 echo ""
 echo "Fertig! Projekt erstellt in: $PROJECT_NAME"
 echo "cd $PROJECT_NAME"
-echo "pnpm dev"
+echo "Entwicklung: pnpm dev"
+echo "Lint-Check: pnpm lint"
+echo "Format-Check: pnpm format"
+echo "Auto-Format: pnpm format:fix"
